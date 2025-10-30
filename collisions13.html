@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>1-D Cart Collision Simulator (Elastic ↔ Inelastic, with Friction & Energy Plot)</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root { --bg:#f7f7fb; --ink:#222; --ink2:#555; --accent:#2563eb; --card:#fff; }
+  *{box-sizing:border-box}
+  body { font-family: system-ui, Arial, sans-serif; background: var(--bg); color: var(--ink); margin:0; }
+  header { padding: 16px; text-align:center; background: #eef2ff; border-bottom: 1px solid #e5e7eb; }
+  h1 { margin: 0; font-size: 22px; }
+  .wrap { max-width: 1200px; margin: 16px auto; padding: 0 12px; display: grid; gap: 12px; }
+  .panel { background: var(--card); border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; }
+  .controls { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); align-items: end; }
+  .control { display: grid; gap: 4px; }
+  label { font-size: 12px; color: var(--ink2); }
+  input[type="number"], input[type="range"] {
+    width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px; background: white;
+  }
+  button {
+    padding: 8px 10px; border-radius: 10px; border: 1px solid #cbd5e1; background: white; cursor: pointer;
+  }
+  button.primary { background: var(--accent); color: white; border: none; }
+  button:disabled, input:disabled { opacity: 0.5; cursor: not-allowed; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .mini { font-size: 12px; color: var(--ink2); }
+
+  .stage { height: 220px; position: relative; background: #fafafa;
+           border-radius: 10px; border: 1px dashed #e5e7eb; overflow: hidden; }
+  .track { position:absolute; left:0; right:0; top:50%; height:4px; margin-top:-2px; background:#777; }
+  .wall { position:absolute; top:0; bottom:0; width:6px; background:#444; }
+  .wall.left { left:0; } .wall.right { right:0; }
+
+  .cart { position:absolute; bottom: calc(50% + 4px); width:80px; height:36px; border-radius:8px;
+          box-shadow:0 2px 4px rgba(0,0,0,0.14); display:flex; align-items:center; justify-content:center;
+          color:white; font-weight:700; }
+  .cart .tag { position:absolute; top:-18px; background:#111827; color:#fff; font-size:11px;
+               padding:2px 6px; border-radius:6px; }
+  .cart1 { background:#ef4444; } .cart2 { background:#0ea5e9; }
+
+  .grid4 { display: grid; grid-template-columns: 1fr; gap: 12px; }
+
+  .legend { display:flex; gap:12px; font-size:13px; color:var(--ink2); }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; vertical-align:middle; }
+  .dot.red{ background:#ef4444; } .dot.cyan{ background:#0ea5e9; } .dot.black{ background:#111; }
+
+  .stats table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .stats th, .stats td { border-bottom: 1px solid #e5e7eb; padding: 6px 8px; text-align:right; }
+  .stats th:first-child, .stats td:first-child { text-align:left; }
+
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #111;
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 8px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    font-size: 14px;
+    z-index: 10000;
+  }
+  .toast.show { opacity: 0.9; }
+</style>
+</head>
+<body>
+<header>
+  <h1>1-D Collision of Two Carts (Elastic ↔ Inelastic, with Friction & Energy Plot)</h1>
+  <div class="mini">Momentum: p₁ (red), p₂ (blue), p_total (black). Kinetic energy: K₁, K₂, K_total. Wall collisions are always elastic.</div>
+</header>
+
+<div class="wrap">
+
+  <!-- Controls -->
+  <div class="panel">
+    <div class="controls">
+      <div class="control">
+        <label>Mass m₁ (kg)</label>
+        <input id="m1" type="number" min="0.1" step="0.1" value="2">
+      </div>
+
+      <div class="control">
+        <label>Mass m₂ (kg)</label>
+        <input id="m2" type="number" min="0.1" step="0.1" value="3">
+      </div>
+
+      <div class="control">
+        <label>Initial v₁ (m/s)</label>
+        <input id="v1" type="number" step="0.1" value="3">
+      </div>
+
+      <div class="control">
+        <label>Initial v₂ (m/s)</label>
+        <input id="v2" type="number" step="0.1" value="-1">
+      </div>
+
+      <div class="control">
+        <label>Cart Restitution (e)</label>
+        <input id="e" type="range" min="0" max="1" step="0.01" value="1">
+        <div class="row mini">e = <span id="eVal">1.00</span></div>
+      </div>
+
+      <div class="control">
+        <label>Track Friction (μₖ)</label>
+        <input id="mu" type="range" min="0" max="0.05" step="0.001" value="0.01">
+        <div class="row mini">μₖ = <span id="muVal">0.010</span></div>
+      </div>
+
+      <div class="control">
+        <label>&nbsp;</label>
+        <div class="row">
+          <button id="play" class="primary">▶ Play</button>
+          <button id="pause">⏸ Pause</button>
+          <button id="reset">↺ Reset</button>
+          <button id="copy">📋 Copy Data</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:8px;">
+      <label class="mini">
+        <input type="checkbox" id="clipToCollision" checked>
+        Show only up to first collision (recommended)
+      </label>
+    </div>
+
+    <div class="row legend" style="margin-top:8px;">
+      <span><span class="dot red"></span>Cart 1</span>
+      <span><span class="dot cyan"></span>Cart 2</span>
+      <span><span class="dot black"></span>Total</span>
+    </div>
+  </div>
+
+  <!-- Stage -->
+  <div class="panel">
+    <div id="stage" class="stage">
+      <div class="wall left"></div>
+      <div class="wall right"></div>
+      <div class="track"></div>
+      <div id="cart1" class="cart cart1"><div class="tag">m₁</div>1</div>
+      <div id="cart2" class="cart cart2"><div class="tag">m₂</div>2</div>
+    </div>
+  </div>
+
+  <!-- Plots -->
+  <div class="grid4">
+    <div class="panel"><div id="xPlot" style="height:260px;"></div></div>
+    <div class="panel"><div id="vPlot" style="height:260px;"></div></div>
+    <div class="panel"><div id="kPlot" style="height:260px;"></div></div>
+    <div class="panel"><div id="pPlot" style="height:260px;"></div></div>
+  </div>
+
+  <!-- Snapshot -->
+  <div class="panel stats">
+    <h3 style="margin:0 0 8px 0;">Collision Snapshot (First Impact)</h3>
+    <table>
+      <thead>
+        <tr><th>Quantity</th><th>Before</th><th>After</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>t (s)</td><td id="tBefore">—</td><td id="tAfter">—</td></tr>
+        <tr><td>v₁ (m/s)</td><td id="v1Before">—</td><td id="v1After">—</td></tr>
+        <tr><td>v₂ (m/s)</td><td id="v2Before">—</td><td id="v2After">—</td></tr>
+        <tr><td>Momentum Total (kg·m/s)</td><td id="pBefore">—</td><td id="pAfter">—</td></tr>
+        <tr><td>Kinetic Energy Total (J)</td><td id="kBefore">—</td><td id="kAfter">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+(function(){
+  // --- DOM handles ---
+  const get=id=>document.getElementById(id);
+  const m1El=get('m1'), m2El=get('m2'),
+        v1El=get('v1'), v2El=get('v2'),
+        eEl=get('e'),   eVal=get('eVal'),
+        muEl=get('mu'), muVal=get('muVal');
+
+  const playBtn=get('play'),
+        pauseBtn=get('pause'),
+        resetBtn=get('reset'),
+        copyBtn=get('copy');
+
+  const clipBox=get('clipToCollision');
+  const stage=get('stage'),
+        cart1=get('cart1'),
+        cart2=get('cart2');
+
+  const tB=get('tBefore'), tA=get('tAfter'),
+        v1B=get('v1Before'), v1A=get('v1After'),
+        v2B=get('v2Before'), v2A=get('v2After'),
+        pB=get('pBefore'),   pA=get('pAfter'),
+        kB=get('kBefore'),   kA=get('kAfter');
+
+  const toast=get('toast');
+
+  // --- World constants ---
+  const g = 9.8;
+  const WORLD_LEN = 10;      // meters
+  const cartLen   = 0.6;     // meters
+  const wallPad   = 6;       // px padding inside stage for drawing
+
+  function ppm(){
+    return (stage.clientWidth - 2*wallPad) / WORLD_LEN;
+  }
+  function w2p(xMeters){
+    return wallPad + xMeters * ppm();
+  }
+
+  // --- Simulation state ---
+  let m1, m2, e, mu;
+  let x1, x2, v1, v2;
+  let t;
+  const dt = 0.01;
+
+  let running = false;
+  let rafId = null;
+
+  // first collision bookkeeping
+  let firstCaptured = false;
+  let firstCollisionIndex = null;
+
+  // time series arrays
+  let tArr = [],
+      x1Arr = [], x2Arr = [],
+      v1Arr = [], v2Arr = [],
+      k1Arr = [], k2Arr = [], ktotArr = [],
+      p1Arr = [], p2Arr = [], ptotArr = [];
+
+  // --- helpers ---
+  function kinetic(m,v){ return 0.5*m*v*v; }
+  function momentum(m,v){ return m*v; }
+
+  function showToast(msg){
+    toast.textContent = "✅ " + msg;
+    toast.classList.add('show');
+    clearTimeout(showToast._t);
+    showToast._t = setTimeout(()=>toast.classList.remove('show'),2000);
+  }
+
+  function clearSnap(){
+    [tB,tA,v1B,v1A,v2B,v2A,pB,pA,kB,kA].forEach(el => el.textContent = '—');
+  }
+
+  function setControlsEnabled(en){
+    [m1El,m2El,v1El,v2El,eEl,muEl].forEach(el => { el.disabled = !en; });
+  }
+
+  function applyUserInputs(){
+    m1 = +m1El.value;
+    m2 = +m2El.value;
+    v1 = +v1El.value;
+    v2 = +v2El.value;
+    e  = +eEl.value;
+    mu = +muEl.value;
+    eVal.textContent  = e.toFixed(2);
+    muVal.textContent = mu.toFixed(3);
+  }
+
+  function placeCarts(){
+    const w = cartLen * ppm();
+    cart1.style.left  = w2p(x1) + 'px';
+    cart2.style.left  = w2p(x2) + 'px';
+    cart1.style.width = w + 'px';
+    cart2.style.width = w + 'px';
+  }
+
+  // friction: constant magnitude μ m g opposite motion, zero if stopped
+  function applyFriction(){
+    if(mu === 0) return;
+    const a1 = -mu*g*Math.sign(v1);
+    const a2 = -mu*g*Math.sign(v2);
+
+    if(Math.abs(v1) < Math.abs(a1*dt)) v1 = 0;
+    else v1 += a1*dt;
+
+    if(Math.abs(v2) < Math.abs(a2*dt)) v2 = 0;
+    else v2 += a2*dt;
+  }
+
+  // perfectly elastic wall bounces (wall restitution = 1 always)
+  function handleWalls(){
+    const left  = 0;
+    const right = WORLD_LEN - cartLen;
+
+    // cart1
+    if(x1 <= left && v1 < 0){
+      x1 = left;
+      v1 = -v1; // elastic bounce with wall
+    }
+    if(x1 >= right && v1 > 0){
+      x1 = right;
+      v1 = -v1;
+    }
+
+    // cart2
+    if(x2 <= left && v2 < 0){
+      x2 = left;
+      v2 = -v2;
+    }
+    if(x2 >= right && v2 > 0){
+      x2 = right;
+      v2 = -v2;
+    }
+  }
+
+  // cart-cart collision with restitution e
+  function handleCollision(prev1, prev2){
+    const overlap = (x1 + cartLen >= x2) && (x2 + cartLen >= x1);
+
+    if(!overlap) return;
+
+    const relVel = v1 - v2;
+    if(relVel <= 0){
+      // moving apart or equal speeds, don't "collide" again
+      return;
+    }
+
+    // snapshot BEFORE collision (the instant just before impact)
+    if(!firstCaptured){
+      const t_before = t - dt;
+      const u1 = v1Arr[v1Arr.length-1];
+      const u2 = v2Arr[v2Arr.length-1];
+
+      tB.textContent   = t_before.toFixed(3);
+      v1B.textContent  = u1.toFixed(3);
+      v2B.textContent  = u2.toFixed(3);
+      pB.textContent   = (momentum(m1,u1)+momentum(m2,u2)).toFixed(3);
+      kB.textContent   = (kinetic(m1,u1)+kinetic(m2,u2)).toFixed(3);
+    }
+
+    // do collision response using e between carts
+    const u1 = v1;
+    const u2 = v2;
+    const M  = m1 + m2;
+
+    const v1_new = ((m1*u1 + m2*u2) - m2*e*(u1-u2)) / M;
+    const v2_new = ((m1*u1 + m2*u2) + m1*e*(u1-u2)) / M;
+    v1 = v1_new;
+    v2 = v2_new;
+
+    // separate them so they don't tunnel
+    const mid = (x1 + x2)/2;
+    x1 = mid - cartLen/2;
+    x2 = mid + cartLen/2;
+
+    // snapshot AFTER collision
+    if(!firstCaptured){
+      tA.textContent   = t.toFixed(3);
+      v1A.textContent  = v1.toFixed(3);
+      v2A.textContent  = v2.toFixed(3);
+      pA.textContent   = (momentum(m1,v1)+momentum(m2,v2)).toFixed(3);
+      kA.textContent   = (kinetic(m1,v1)+kinetic(m2,v2)).toFixed(3);
+
+      firstCaptured = true;
+      firstCollisionIndex = tArr.length; // index where impact was recorded
+    }
+  }
+
+  // main physics step
+  function step(){
+    const prev1 = x1;
+    const prev2 = x2;
+
+    // friction first (continuous effect)
+    applyFriction();
+
+    // update kinematics
+    x1 += v1 * dt;
+    x2 += v2 * dt;
+    t  += dt;
+
+    // walls (external impulses)
+    handleWalls();
+
+    // cart-cart collision (internal)
+    handleCollision(prev1, prev2);
+
+    // record data
+    const k1 = kinetic(m1,v1),
+          k2 = kinetic(m2,v2),
+          kt = k1 + k2;
+    const p1 = momentum(m1,v1),
+          p2 = momentum(m2,v2),
+          pt = p1 + p2;
+
+    tArr.push(t);
+    x1Arr.push(x1); x2Arr.push(x2);
+    v1Arr.push(v1); v2Arr.push(v2);
+    k1Arr.push(k1); k2Arr.push(k2); ktotArr.push(kt);
+    p1Arr.push(p1); p2Arr.push(p2); ptotArr.push(pt);
+  }
+
+  // --- Plot init and update ---
+  const baseLayout = {
+    margin:{l:50,r:10,t:10,b:35},
+    legend:{orientation:'h'},
+    xaxis:{title:'t (s)'}
+  };
+
+  function initPlots(){
+    Plotly.newPlot('xPlot',[
+      {x:tArr,y:x1Arr,name:'x₁(t)',mode:'lines',line:{color:'#ef4444'}},
+      {x:tArr,y:x2Arr,name:'x₂(t)',mode:'lines',line:{color:'#0ea5e9'}}
+    ],{
+      ...baseLayout,
+      yaxis:{title:'x (m)'}
+    },{displaylogo:false});
+
+    Plotly.newPlot('vPlot',[
+      {x:tArr,y:v1Arr,name:'v₁(t)',mode:'lines',line:{color:'#ef4444'}},
+      {x:tArr,y:v2Arr,name:'v₂(t)',mode:'lines',line:{color:'#0ea5e9'}}
+    ],{
+      ...baseLayout,
+      yaxis:{title:'v (m/s)'}
+    },{displaylogo:false});
+
+    Plotly.newPlot('kPlot',[
+      {x:tArr,y:k1Arr,    name:'K₁',      mode:'lines',line:{color:'#ef4444'}},
+      {x:tArr,y:k2Arr,    name:'K₂',      mode:'lines',line:{color:'#0ea5e9'}},
+      {x:tArr,y:ktotArr,  name:'K_total', mode:'lines',line:{color:'#111',width:3}}
+    ],{
+      ...baseLayout,
+      yaxis:{title:'Kinetic Energy (J)', range:[0,null]}
+    },{displaylogo:false});
+
+    Plotly.newPlot('pPlot',[
+      {x:tArr,y:p1Arr,    name:'p₁',        mode:'lines',line:{color:'#ef4444'}},
+      {x:tArr,y:p2Arr,    name:'p₂',        mode:'lines',line:{color:'#0ea5e9'}},
+      {x:tArr,y:ptotArr,  name:'p_total',   mode:'lines',line:{color:'#111',width:3}}
+    ],{
+      ...baseLayout,
+      yaxis:{title:'Momentum (kg·m/s)'}
+    },{displaylogo:false});
+  }
+
+  // helper to slice arrays up to collision if clip is on
+function currentEndIndex() {
+  let end = tArr.length - 1;
+
+  if (clipBox.checked && firstCollisionIndex !== null) {
+    // find the first time either cart hits a wall after the collision
+    for (let i = firstCollisionIndex; i < tArr.length; i++) {
+      if (x1Arr[i] <= 0 || x1Arr[i] >= WORLD_LEN - cartLen ||
+          x2Arr[i] <= 0 || x2Arr[i] >= WORLD_LEN - cartLen) {
+        end = Math.max(i - 1, firstCollisionIndex); // stop one frame before contact
+        break;
+      }
+    }
+  }
+
+  return end;
+}
+
+  function sliceTo(arr, idx){
+    return arr.slice(0, idx+1);
+  }
+
+  function updatePlots(){
+    const end = currentEndIndex();
+
+    const tUse   = sliceTo(tArr, end);
+    const x1Use  = sliceTo(x1Arr,end);
+    const x2Use  = sliceTo(x2Arr,end);
+    const v1Use  = sliceTo(v1Arr,end);
+    const v2Use  = sliceTo(v2Arr,end);
+    const k1Use  = sliceTo(k1Arr,end);
+    const k2Use  = sliceTo(k2Arr,end);
+    const ktUse  = sliceTo(ktotArr,end);
+    const p1Use  = sliceTo(p1Arr,end);
+    const p2Use  = sliceTo(p2Arr,end);
+    const ptUse  = sliceTo(ptotArr,end);
+
+    Plotly.update('xPlot',{ x:[tUse,tUse], y:[x1Use,x2Use] });
+    Plotly.update('vPlot',{ x:[tUse,tUse], y:[v1Use,v2Use] });
+    Plotly.update('kPlot',{ x:[tUse,tUse,tUse], y:[k1Use,k2Use,ktUse] });
+    Plotly.update('pPlot',{ x:[tUse,tUse,tUse], y:[p1Use,p2Use,ptUse] });
+  }
+
+  // --- Animation loop ---
+  function loop(){
+    if(!running) return;
+    step();
+    placeCarts();
+    updatePlots();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  // --- Reset / init ---
+  function resetState(){
+    running = false;
+    if(rafId !== null){
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+
+    applyUserInputs();
+
+    // reset world state
+    t  = 0;
+    x1 = 2;
+    x2 = 4.5;
+    firstCaptured = false;
+    firstCollisionIndex = null;
+
+    // seed arrays with initial state
+    tArr = [t];
+    x1Arr = [x1]; x2Arr = [x2];
+    v1Arr = [v1]; v2Arr = [v2];
+
+    const k1 = kinetic(m1,v1);
+    const k2 = kinetic(m2,v2);
+    const p1 = momentum(m1,v1);
+    const p2 = momentum(m2,v2);
+
+    k1Arr   = [k1];
+    k2Arr   = [k2];
+    ktotArr = [k1 + k2];
+
+    p1Arr   = [p1];
+    p2Arr   = [p2];
+    ptotArr = [p1 + p2];
+
+    clearSnap();
+    setControlsEnabled(true);
+
+    // draw carts before plotting
+    placeCarts();
+
+    // (re)initialize plots from scratch
+    if(window.Plotly){
+      Plotly.purge('xPlot');
+      Plotly.purge('vPlot');
+      Plotly.purge('kPlot');
+      Plotly.purge('pPlot');
+    }
+    initPlots();
+    updatePlots(); // ensure they reflect clipToCollision from the start
+  }
+
+  // --- Copy data ---
+  // We copy t, v1, v2 for ~25 steps before and after first collision index.
+  copyBtn.onclick = ()=>{
+    if(!firstCaptured || firstCollisionIndex === null){
+      showToast("Run until first collision first!");
+      return;
+    }
+
+    const idx = firstCollisionIndex;
+    const before = 25;
+    const after  = 25;
+
+    const start = Math.max(0, idx - before);
+    const end   = Math.min(tArr.length - 1, idx + after);
+
+    let tsv = "t (s)\tv1 (m/s)\tv2 (m/s)\n";
+    for(let i=start;i<=end;i++){
+      tsv += [
+        tArr[i].toFixed(3),
+        v1Arr[i].toFixed(3),
+        v2Arr[i].toFixed(3)
+      ].join("\t") + "\n";
+    }
+
+    const rowsCopied = (end-start+1) + 1; // +1 header row
+    navigator.clipboard.writeText(tsv)
+      .then(()=>showToast(`${rowsCopied} rows copied (TSV)`))
+      .catch(err=>showToast(`Copy failed: ${err}`));
+  };
+
+  // --- UI wiring ---
+  playBtn.onclick = ()=>{
+    if(!running){
+      running = true;
+      setControlsEnabled(false);
+      rafId = requestAnimationFrame(loop);
+    }
+  };
+
+  pauseBtn.onclick = ()=>{
+    running = false;
+    if(rafId !== null){
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    setControlsEnabled(true);
+  };
+
+  resetBtn.onclick = resetState;
+
+  // update sliders display live, and allow parameter changes between runs (not mid-run)
+  eEl.oninput = ()=>{
+    eVal.textContent = (+eEl.value).toFixed(2);
+    if(!running){
+      applyUserInputs();
+      resetState();
+    }
+  };
+
+  muEl.oninput = ()=>{
+    muVal.textContent = (+muEl.value).toFixed(3);
+    if(!running){
+      applyUserInputs();
+      resetState();
+    }
+  };
+
+  [m1El,m2El,v1El,v2El].forEach(el=>{
+    el.addEventListener("input",()=>{
+      if(!running){
+        applyUserInputs();
+        resetState();
+      }
+    });
+  });
+
+  // when "show only up to first collision" is toggled, just re-draw the plots with sliced data
+  clipBox.addEventListener("change",()=>{
+    updatePlots();
+  });
+
+  // --- boot ---
+  window.addEventListener("load", ()=>{
+    resetState();
+    placeCarts();
+  });
+
+})();
+</script>
+</body>
+</html>
